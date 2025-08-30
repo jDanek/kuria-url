@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 
 namespace Kuria\Url;
 
@@ -12,6 +14,12 @@ class Url
 
     /** @var string|null */
     private $scheme;
+
+    /** @var string|null */
+    private $user;
+
+    /** @var string|null */
+    private $password;
 
     /** @var string|null */
     private $host;
@@ -31,8 +39,19 @@ class Url
     /** @var int */
     private $preferredFormat;
 
+    /** @var array Standard ports for schemes */
+    private static $standardPorts = [
+        'http' => 80,
+        'https' => 443,
+        'ftp' => 21,
+        'ftps' => 990,
+        'ssh' => 22,
+    ];
+
     function __construct(
         ?string $scheme = null,
+        ?string $user = null,
+        ?string $password = null,
         ?string $host = null,
         ?int $port = null,
         string $path = '',
@@ -41,6 +60,8 @@ class Url
         int $preferredFormat = self::ABSOLUTE
     ) {
         $this->scheme = $scheme;
+        $this->user = $user;
+        $this->password = $password;
         $this->host = $host;
         $this->port = $port;
         $this->path = $path;
@@ -57,8 +78,8 @@ class Url
     /**
      * Parse an URL
      *
-     * @throws InvalidUrlException if the URL is invalid
      * @return static
+     * @throws InvalidUrlException if the URL is invalid
      */
     static function parse(string $url, ?int $preferredFormat = self::ABSOLUTE)
     {
@@ -66,6 +87,12 @@ class Url
 
         if ($components === false) {
             throw new InvalidUrlException(sprintf('The given URL "%s" is invalid', $url));
+        }
+
+        if (isset($components['host'])) {
+            if (!self::isValidHost($components['host'])) {
+                throw new InvalidUrlException(sprintf('Invalid host in URL "%s"', $url));
+            }
         }
 
         $query = [];
@@ -76,6 +103,8 @@ class Url
 
         return new static(
             $components['scheme'] ?? null,
+            $components['user'] ?? null,
+            $components['pass'] ?? null,
             $components['host'] ?? null,
             $components['port'] ?? null,
             $components['path'] ?? '',
@@ -100,6 +129,52 @@ class Url
         return $this->scheme !== null;
     }
 
+    function getUserInfo(): ?string
+    {
+        if ($this->user === null) {
+            return null;
+        }
+
+        $userInfo = $this->user;
+        if(!empty($this->password)) {
+            $userInfo .= ':' . $this->password;
+        }
+
+        return $userInfo;
+    }
+
+    function setUserInfo(?string $user, ?string $password = null): void
+    {
+        [$this->user, $this->password] = $this->normalizeUserInfo($user, $password);
+    }
+
+
+    function getAuthority(): string
+    {
+        return $this->buildAuthority();
+    }
+
+    /**
+     * @throws InvalidUrlException if the authority is invalid
+     */
+    function setAuthority(?string $authority): void
+    {
+        if ($authority === null || $authority === '') {
+            $this->user = null;
+            $this->password = null;
+            $this->host = null;
+            $this->port = null;
+            return;
+        }
+
+        $components = $this->parseAuthority($authority);
+
+        $this->user = $components['user'];
+        $this->password = $components['password'];
+        $this->host = $components['host'];
+        $this->port = $components['port'];
+    }
+
     function getHost(): ?string
     {
         return $this->host;
@@ -112,16 +187,10 @@ class Url
      */
     function getFullHost(): ?string
     {
-        if ($this->host === null) {
-            return null;
-        }
-
         $fullHost = $this->host;
-
         if ($this->port !== null) {
             $fullHost .= ':' . $this->port;
         }
-
         return $fullHost;
     }
 
@@ -142,6 +211,7 @@ class Url
 
     function setPort(?int $port): void
     {
+        $this->validatePort($port);
         $this->port = $port;
     }
 
@@ -170,9 +240,32 @@ class Url
         return $this->query;
     }
 
+    /**
+     * Why not http_build_query()?
+     *
+     * http_build_query() has several issues for URI compliance:
+     * 1. Always adds '=' for empty values: "key=" instead of "key"
+     * 2. Uses PHP-specific encoding (spaces as '+' instead of '%20')
+     * 3. Cannot handle null values properly
+     * 4. Array handling creates nested structures incompatible with URI specs
+     *
+     * Manual building ensures RFC 3986 compliance and matches PSR-7 behavior.
+     */
     function getQueryString(): string
     {
-        return http_build_query($this->query, '', '&');
+        if (!$this->query) return '';
+
+        $pairs = array_map(function($k, $v) {
+            $k = rawurlencode((string)$k);
+            if (is_array($v)) {
+                return http_build_query([$k => $v], '', '&');
+            }
+            return $v === null || $v === ''
+                ? $k
+                : $k . '=' . rawurlencode((string)$v);
+        }, array_keys($this->query), $this->query);
+
+        return implode('&', $pairs);
     }
 
     function setQuery(array $query): void
@@ -320,10 +413,10 @@ class Url
             $output .= '//';
         }
 
-        // host, port
-        $output .= $this->getFullHost();
+        // authority - host and port
+        $output .= $this->buildAuthority(true);
 
-        // ensure a forward slash between host and a non-empty path
+        // ensure slash between host and path
         if ($this->path !== '' && $this->path[0] !== '/') {
             $output .= '/';
         }
@@ -351,11 +444,161 @@ class Url
         }
 
         // fragment
-        if ($this->fragment !== null) {
+        if (!empty($this->fragment)) {
             $output .= '#';
             $output .= $this->fragment;
         }
 
         return $output;
+    }
+
+    private function normalizeUserInfo(?string $user, ?string $password): array
+    {
+        if ($user === '' || $user === null) {
+            return [null, null];
+        }
+        return [$user, $password];
+    }
+
+    private function validatePort(?int $port): void
+    {
+        if ($port !== null && ($port < 1 || $port > 65535)) {
+            throw new InvalidUrlException(sprintf('Port %d is out of range (1-65535)', $port));
+        }
+    }
+
+    /**
+     * Check whether a host is valid
+     */
+    private static function isValidHost(string $host): bool
+    {
+        // IPv6 in brackets
+        if ((strpos($host, '[') === 0) && (substr($host, -1) === ']')) {
+            $ipv6 = substr($host, 1, -1);
+            return filter_var($ipv6, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false;
+        }
+
+        // IPv4
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
+            return true;
+        }
+
+        // standard domain (RFC 1123)
+        if (strlen($host) > 253) {
+            return false;
+        }
+
+        $labels = explode('.', $host);
+        foreach ($labels as $label) {
+            if (strlen($label) === 0 || strlen($label) > 63) return false;
+            if (!preg_match('/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/', $label)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Parse an authority part of an URL (user:pass@host:port)
+     * @see parseAuthorityGeneric()
+     */
+    private function parseAuthority(string $authority): array
+    {
+        if (strpos($authority, '[') !== false) {
+            return $this->parseAuthorityGeneric($authority, true);
+        }
+        return $this->parseAuthorityGeneric($authority);
+    }
+
+    /**
+     * Parse an authority part of an URL (user:pass@host:port)
+     * @return array{
+     *     user: string|null,
+     *     password: string|null,
+     *     host: string,
+     *     port: int|null,
+     * }
+     */
+    private function parseAuthorityGeneric(string $authority, bool $isIPv6 = false): array
+    {
+        if ($authority === '') {
+            throw new InvalidUrlException('Authority cannot be empty');
+        }
+
+        // specific chech for "@" only
+        if ($authority === '@') {
+            throw new InvalidUrlException(sprintf('Empty host in authority "%s"', $authority));
+        }
+
+        $pattern = $isIPv6
+            ? '/^(?:([^:@]+)(?::([^@]*))?@)?\[([^\]]+)\](?::(.*))?$/'
+            : '/^(?:([^:@]+)(?::([^@]*))?@)?([^:]+?)(?::(.*))?$/';
+
+        if (!preg_match($pattern, $authority, $matches)) {
+            throw new InvalidUrlException(sprintf('Invalid authority format "%s"', $authority));
+        }
+
+        $user = $matches[1] ?? null;
+        $password = $matches[2] ?? null;
+        $host = $matches[3] ?? '';
+        $portStr = $matches[4] ?? null;
+
+        if ($host === '') {
+            throw new InvalidUrlException(sprintf('Empty host in authority "%s"', $authority));
+        }
+
+        $port = null;
+        if ($portStr !== null) {
+            if ($portStr === '' || !ctype_digit($portStr) || $portStr[0] === '-') {
+                throw new InvalidUrlException(sprintf('Invalid port in authority "%s"', $authority));
+            }
+            $port = (int)$portStr;
+            $this->validatePort($port);
+        }
+
+        [$user, $password] = $this->normalizeUserInfo($user, $password);
+
+        if ($isIPv6) {
+            $host = '[' . $host . ']';
+        }
+
+        return [
+            'user' => $user,
+            'password' => $password,
+            'host' => $host,
+            'port' => $port,
+        ];
+    }
+
+    /**
+     *  Build an authority part of an URL (user:pass@host:port)
+     */
+    private function buildAuthority(bool $alwaysIncludePort = false): string
+    {
+        if ($this->host === null) {
+            return '';
+        }
+
+        $authority = '';
+
+        $userInfo = $this->getUserInfo();
+        if ($userInfo !== null) {
+            $authority .= $userInfo . '@';
+        }
+
+        $authority .= $this->host;
+
+        if ($this->port !== null
+            && (
+                $alwaysIncludePort
+                || !isset(self::$standardPorts[$this->scheme])
+                || self::$standardPorts[$this->scheme] !== $this->port
+            )
+        ) {
+            $authority .= ':' . $this->port;
+        }
+
+        return $authority;
     }
 }

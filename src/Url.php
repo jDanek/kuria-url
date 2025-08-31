@@ -27,6 +27,9 @@ class Url
     /** @var int|null */
     private $port;
 
+    /** @var bool  */
+    private $alwaysIncludeDefaultPort = true;
+
     /** @var string */
     private $path;
 
@@ -45,6 +48,7 @@ class Url
         'https' => 443,         // Hypertext Transfer Protocol Secure
         'ftp' => 21,            // File Transfer Protocol
         'sftp' => 22,           // Secure File Transfer Protocol
+        'ftps' => 990,          // Secure File Transfer Protocol
         'smtp' => 25,           // Simple Mail Transfer Protocol
         'pop3' => 110,          // Post Office Protocol v3
         'imap' => 143,          // Internet Message Access Protocol
@@ -65,7 +69,8 @@ class Url
         string $path = '',
         array $query = [],
         ?string $fragment = null,
-        int $preferredFormat = self::ABSOLUTE
+        int $preferredFormat = self::ABSOLUTE,
+        bool $alwaysIncludeDefaultPort = true
     ) {
         $this->scheme = $scheme;
         $this->user = $user;
@@ -76,6 +81,7 @@ class Url
         $this->query = $query;
         $this->fragment = $fragment;
         $this->preferredFormat = $preferredFormat;
+        $this->alwaysIncludeDefaultPort = $alwaysIncludeDefaultPort;
     }
 
     function __toString(): string
@@ -89,7 +95,7 @@ class Url
      * @return static
      * @throws InvalidUrlException if the URL is invalid
      */
-    static function parse(string $url, ?int $preferredFormat = self::ABSOLUTE)
+    static function parse(string $url, ?int $preferredFormat = self::ABSOLUTE, bool $alwaysIncludeDefaultPort = true)
     {
         $components = parse_url($url);
 
@@ -118,7 +124,8 @@ class Url
             $components['path'] ?? '',
             $query,
             $components['fragment'] ?? null,
-            $preferredFormat
+            $preferredFormat,
+            $alwaysIncludeDefaultPort
         );
     }
 
@@ -156,10 +163,16 @@ class Url
         [$this->user, $this->password] = $this->normalizeUserInfo($user, $password);
     }
 
-
-    function getAuthority(): string
+    /**
+     * Get the authority (user:pass@host:port)
+     *
+     * @param bool|null $includeDefaultPort controls if standard ports (80/443/etc.) are included; null falls back to $alwaysIncludeDefaultPort.
+     * @return string
+     */
+    function getAuthority(?bool $includeDefaultPort = null): string
     {
-        return $this->buildAuthority();
+        $includeDefaultPort = $includeDefaultPort ?? $this->alwaysIncludeDefaultPort;
+        return $this->buildAuthority($includeDefaultPort);
     }
 
     /**
@@ -317,6 +330,19 @@ class Url
         $this->preferredFormat = $preferredFormat;
     }
 
+    function getAlwaysIncludeDefaultPort(): bool
+    {
+        return $this->alwaysIncludeDefaultPort;
+    }
+
+    /**
+     * Whether to always include the default port in the authority
+     */
+    function setAlwaysIncludeDefaultPort(bool $alwaysIncludeDefaultPort): void
+    {
+        $this->alwaysIncludeDefaultPort = $alwaysIncludeDefaultPort;
+    }
+
     /**
      * See whether a query parameter is defined
      *
@@ -422,7 +448,7 @@ class Url
         }
 
         // authority - host and port
-        $output .= $this->buildAuthority(true);
+        $output .= $this->buildAuthority($this->alwaysIncludeDefaultPort);;
 
         // ensure slash between host and path
         if ($this->path !== '' && $this->path[0] !== '/') {
@@ -582,7 +608,7 @@ class Url
     /**
      *  Build an authority part of an URL (user:pass@host:port)
      */
-    private function buildAuthority(bool $alwaysIncludePort = false): string
+    private function buildAuthority(bool $includeDefaultPort): string
     {
         if ($this->host === null) {
             return '';
@@ -599,7 +625,7 @@ class Url
 
         if ($this->port !== null
             && (
-                $alwaysIncludePort
+                $includeDefaultPort
                 || !isset(self::$standardPorts[$this->scheme])
                 || self::$standardPorts[$this->scheme] !== $this->port
             )

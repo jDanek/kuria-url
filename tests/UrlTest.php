@@ -91,7 +91,7 @@ class UrlTest extends Test
                     'getHost' => 'example.com',
                     'getFullHost' => 'example.com:80',
                     'getPort' => 80,
-                    'getAuthority' => 'example.com',
+                    'getAuthority' => 'example.com:80',
                     'buildRelative' => '',
                 ],
             ],
@@ -102,7 +102,7 @@ class UrlTest extends Test
                     'getHost' => 'example.com',
                     'getFullHost' => 'example.com:443',
                     'getPort' => 443,
-                    'getAuthority' => 'example.com',
+                    'getAuthority' => 'example.com:443',
                     'buildRelative' => '',
                 ],
             ],
@@ -162,7 +162,7 @@ class UrlTest extends Test
                     'getFullHost' => 'ftp.example.com:21',
                     'getPath' => '/files',
                     'getUserInfo' => 'user:pass',
-                    'getAuthority' => 'user:pass@ftp.example.com',
+                    'getAuthority' => 'user:pass@ftp.example.com:21',
                     'buildRelative' => '/files',
                 ],
             ],
@@ -192,6 +192,21 @@ class UrlTest extends Test
                     'getQuery' => ['empty' => '', 'flag' => 'true', 'arr' => ['1', '2'], 'encoded' => '✓'],
                     'getFragment' => 'frag-ment_part',
                     'buildRelative' => '/some/../weird/./path/file.txt?empty&flag=true&arr%5B0%5D=1&arr%5B1%5D=2&encoded=%E2%9C%93#frag-ment_part',
+                ],
+            ],
+            'numeric port in user info' => [
+                'https://0:0@0:1/0?0#0',
+                [
+                    'getScheme' => 'https',
+                    'getHost' => '0',
+                    'getFullHost' => '0:1',
+                    'getPort' => 1,
+                    'getPath' => '/0',
+                    'getUserInfo' => '0:0',
+                    'getAuthority' => '0:0@0:1',
+                    'getQuery' => ['0' => ''],
+                    'getFragment' => '0',
+                    'buildRelative' => '/0?0#0',
                 ],
             ],
         ];
@@ -497,6 +512,7 @@ class UrlTest extends Test
     function testShouldHandleStandardPorts(string $scheme, int $port, bool $shouldOmitFromAuthority)
     {
         $url = new Url();
+        $url->setAlwaysIncludeDefaultPort(false);
         $url->setScheme($scheme);
         $url->setHost('example.com');
         $url->setPort($port);

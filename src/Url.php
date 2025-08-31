@@ -136,7 +136,7 @@ class Url
         }
 
         $userInfo = $this->user;
-        if(!empty($this->password)) {
+        if ($this->password !== null && $this->password !== '') {
             $userInfo .= ':' . $this->password;
         }
 
@@ -444,7 +444,7 @@ class Url
         }
 
         // fragment
-        if (!empty($this->fragment)) {
+        if ($this->fragment !== null && $this->fragment !== '') {
             $output .= '#';
             $output .= $this->fragment;
         }

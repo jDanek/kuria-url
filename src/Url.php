@@ -40,12 +40,20 @@ class Url
     private $preferredFormat;
 
     /** @var array Standard ports for schemes */
-    private static $standardPorts = [
-        'http' => 80,
-        'https' => 443,
-        'ftp' => 21,
-        'ftps' => 990,
-        'ssh' => 22,
+    public static $standardPorts = [
+        'http' => 80,           // Hypertext Transfer Protocol
+        'https' => 443,         // Hypertext Transfer Protocol Secure
+        'ftp' => 21,            // File Transfer Protocol
+        'sftp' => 22,           // Secure File Transfer Protocol
+        'smtp' => 25,           // Simple Mail Transfer Protocol
+        'pop3' => 110,          // Post Office Protocol v3
+        'imap' => 143,          // Internet Message Access Protocol
+        'ssh' => 22,            // Secure Shell (same as SFTP)
+        'telnet' => 23,         // Telnet
+        'ldap' => 389,          // Lightweight Directory Access Protocol
+        'mysql' => 3306,        // MySQL Database
+        'postgres' => 5432,     // PostgreSQL Database
+        'rdp' => 3389,          // Remote Desktop Protocol
     ];
 
     function __construct(
